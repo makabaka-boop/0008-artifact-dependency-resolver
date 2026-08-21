@@ -148,11 +148,14 @@ func (s *Service) ReplaceDependencies(ctx context.Context, name, version string,
 	}()
 
 	for _, insert := range inserts {
-		if created, err := s.st.CreateDependency(v.ID, insert.targetID, insert.constraint); err != nil {
+		created, err := s.st.CreateDependency(v.ID, insert.targetID, insert.constraint)
+		if err != nil {
+			// 记录到外层 batchErr，确保延迟清理闭包触发回滚，
+			// 恢复替换前的依赖集合并清除本批已写入的前缀。
+			batchErr = err
 			return nil, newAPIError(errcode.CodeInternal, err.Error())
-		} else {
-			replacement.RecordInserted(created.ID)
 		}
+		replacement.RecordInserted(created.ID)
 	}
 	state, batchErr := s.refreshDependencyState(v.ID)
 	if batchErr != nil {
