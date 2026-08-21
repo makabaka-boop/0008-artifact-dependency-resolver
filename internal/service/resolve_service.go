@@ -51,12 +51,7 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 		return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 	}
 
-	engine := resolver.New(resolver.Catalog{
-		PublishedVersions:    s.st.PublishedVersions,
-		AllPublishedVersions: s.st.AllPublishedVersions,
-		ArtifactByName:       s.st.GetArtifactByName,
-		DependenciesFor:      s.st.ListDependencies,
-	})
+	engine := s.resolveEngine()
 
 	var items []resolver.ManifestItem
 	for _, it := range manifest {
@@ -95,6 +90,37 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 		out.LockfileRef = ref
 	}
 	return out, nil
+}
+
+func (s *Service) resolveEngine() *resolver.Engine {
+	if s.engine == nil {
+		s.engine = resolver.New(resolver.Catalog{
+			PublishedVersions:    s.st.PublishedVersions,
+			AllPublishedVersions: s.st.AllPublishedVersions,
+			ArtifactByName:       s.st.GetArtifactByName,
+			DependenciesFor:      s.st.ListDependencies,
+		})
+	}
+	return s.engine
+}
+
+// AuditDependencyReplacement records the graph observed while applying a dependency change.
+func (s *Service) AuditDependencyReplacement(ctx context.Context, name, version string, previous []model.DependencyTarget) error {
+	_, v, err := s.getVersion(ctx, name, version)
+	if err != nil {
+		return err
+	}
+	manifest := make([]resolver.ManifestItem, 0, len(previous))
+	for _, dep := range previous {
+		manifest = append(manifest, resolver.ManifestItem{
+			Name: dep.ToArtifactName, Constraint: dep.Constraint,
+		})
+	}
+	result := s.resolveEngine().Resolve(manifest)
+	return s.st.AppendChange(store.ChangeInput{
+		EntityType: "dependency", EntityID: v.ID, Action: "replace-resolve",
+		BeforeJSON: marshal(previous), AfterJSON: marshal(result.Graph),
+	})
 }
 
 // ListResolutions 分页列出解析历史。

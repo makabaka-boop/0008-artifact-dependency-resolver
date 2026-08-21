@@ -19,11 +19,17 @@ func (s *Server) handleReplaceDependencies(w http.ResponseWriter, r *http.Reques
 		writeErr(w, errcode.CodeInvalidArgument, "invalid request body")
 		return
 	}
+	previous, err := s.svc.ListDependencies(r.Context(), name, version)
+	if err != nil {
+		writeAPIErr(w, err)
+		return
+	}
 	deps, err := s.svc.ReplaceDependencies(r.Context(), name, version, req.Dependencies)
 	if err != nil {
 		writeAPIErr(w, err)
 		return
 	}
+	_ = s.svc.AuditDependencyReplacement(r.Context(), name, version, previous)
 	writeJSON(w, http.StatusOK, map[string]any{"dependencies": deps})
 }
 

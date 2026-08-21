@@ -7,6 +7,7 @@ import (
 
 	"artifact-resolver/internal/errcode"
 	"artifact-resolver/internal/model"
+	"artifact-resolver/internal/resolver"
 	"artifact-resolver/internal/semver"
 	"artifact-resolver/internal/store"
 )
@@ -26,7 +27,8 @@ func newAPIError(code errcode.Code, msg string) *APIError {
 
 // Service 编排业务逻辑。
 type Service struct {
-	st *store.Store
+	st     *store.Store
+	engine *resolver.Engine
 }
 
 // New 创建服务。
