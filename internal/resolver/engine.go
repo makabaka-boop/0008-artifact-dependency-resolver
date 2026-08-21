@@ -10,11 +10,13 @@ import (
 )
 
 // Engine 执行依赖解析。
+//
+// Selected/Graph/Nodes/Diags 是单次 Resolve 的临时解析状态：每次 Resolve 进入时清空，
+// 因此同一引擎被服务层跨请求复用时，上一次请求选定的制品与累积的图节点不会残留进
+// 本次结果。单次解析内部的去重（钻石依赖只入选一次）依然由 Selected 在本次调用内保证。
 type Engine struct {
 	cat Catalog
 
-	// Selected 与 Graph/Nodes/Diags 随引擎实例存活，跨多次 Resolve 调用保留，
-	// 供调用方复用同一引擎解析多个清单时复用已经解析的状态。
 	Selected map[string]selectedVersion
 	Graph    []Node
 	Nodes    []model.ResolutionNode
@@ -30,11 +32,16 @@ type selectedVersion struct {
 }
 
 // Resolve 解析依赖清单，返回结果图或诊断。
-// 注意：显式 pin 与环检测栈为每次调用独立；已选定制品与累积图节点则沿用引擎实例状态。
+// 每次调用独立：进入时清空上一轮的 Selected/Graph/Nodes/Diags，使同一引擎被服务层
+// 跨请求复用时，本次生成的图与节点只反映本次 manifest 实际解析出的制品。
+// 显式 pin 映射与环检测栈同样是每次调用独立。
 func (e *Engine) Resolve(manifest []ManifestItem) Result {
-	if e.Selected == nil {
-		e.Selected = map[string]selectedVersion{}
-	}
+	// 清空上一次调用残留的累积状态，防止跨请求泄漏。
+	e.Selected = map[string]selectedVersion{}
+	e.Graph = nil
+	e.Nodes = nil
+	e.Diags = nil
+
 	explicit := map[string]string{}
 	// 用于环检测的递归栈。
 	var stack []string
