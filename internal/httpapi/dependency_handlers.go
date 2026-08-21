@@ -24,6 +24,11 @@ func (s *Server) handleReplaceDependencies(w http.ResponseWriter, r *http.Reques
 		writeAPIErr(w, err)
 		return
 	}
+	// 复用服务层缓存引擎，将当前累积的解析图落库为审计记录。
+	if err := s.svc.PersistResolverState(r.Context(), name, version); err != nil {
+		writeAPIErr(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"dependencies": deps})
 }
 

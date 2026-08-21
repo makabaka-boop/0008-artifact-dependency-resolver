@@ -51,12 +51,7 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 		return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 	}
 
-	engine := resolver.New(resolver.Catalog{
-		PublishedVersions:    s.st.PublishedVersions,
-		AllPublishedVersions: s.st.AllPublishedVersions,
-		ArtifactByName:       s.st.GetArtifactByName,
-		DependenciesFor:      s.st.ListDependencies,
-	})
+	engine := s.resolveEngine()
 
 	var items []resolver.ManifestItem
 	for _, it := range manifest {
@@ -133,6 +128,37 @@ func (s *Service) Compare(ctx context.Context, left, right string) (int, error) 
 		return 0, newAPIError(errcode.CodeInvalidVersion, "invalid right version: "+err.Error())
 	}
 	return semver.Compare(lv, rv), nil
+}
+
+// resolveEngine 返回服务缓存的解析引擎实例，首次调用时构造并复用。
+func (s *Service) resolveEngine() *resolver.Engine {
+	if s.engine == nil {
+		s.engine = resolver.New(resolver.Catalog{
+			PublishedVersions:    s.st.PublishedVersions,
+			AllPublishedVersions: s.st.AllPublishedVersions,
+			ArtifactByName:       s.st.GetArtifactByName,
+			DependenciesFor:      s.st.ListDependencies,
+		})
+	}
+	return s.engine
+}
+
+// PersistResolverState 复用缓存引擎解析空清单，并把引擎当前累积图写入审计记录表。
+// 由 ReplaceDependencies 成功后的入口调用，用于固定引擎内部解析状态。
+func (s *Service) PersistResolverState(ctx context.Context, name, version string) error {
+	_, v, err := s.getVersion(ctx, name, version)
+	if err != nil {
+		return err
+	}
+	engine := s.resolveEngine()
+	result := engine.Resolve(nil)
+	_ = s.st.AppendChange(store.ChangeInput{
+		EntityType: "version",
+		EntityID:   v.ID,
+		Action:     "resolve_state",
+		AfterJSON:  marshal(result.Graph),
+	})
+	return nil
 }
 
 func constraintParse(raw string) (any, error) {
