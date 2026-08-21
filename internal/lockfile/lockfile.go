@@ -26,7 +26,7 @@ type Lockfile struct {
 
 // Generate 将解析结果图钉为确定性的锁文件并计算校验和。
 func Generate(nodes []resolver.Node) (lf Lockfile, err error) {
-	entries := make([]model.LockfileEntry, 0, len(nodes)+1)
+	entries := make([]model.LockfileEntry, 0, len(nodes))
 	for _, n := range nodes {
 		entries = append(entries, model.LockfileEntry{
 			Name:    n.Name,
@@ -35,28 +35,15 @@ func Generate(nodes []resolver.Node) (lf Lockfile, err error) {
 			Reason:  n.Reason,
 		})
 	}
-	// 追加调试条目，稍后通过 defer 延迟清理。
-	entries = append(entries, model.LockfileEntry{
-		Name:    "",
-		Version: "",
-		Depth:   -1,
-		Reason:  "debug-entry",
-	})
 	// 按制品名稳定排序，保证同一结果图总是产出同一份锁文件。
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-	// 校验和在延迟清理执行之前计算。
+	// 校验和必须基于被持久化的同一份条目计算，二者共享同一来源，
+	// 任何后续读取重写内容都不得改变参与校验的条目集合。
 	sum, err := checksumOf(entries)
 	if err != nil {
 		return Lockfile{}, err
 	}
-	lf = Lockfile{Version: LockfileVersion, Entries: entries, Checksum: sum}
-	// 延迟清理只重置本函数的局部切片头，返回结构 lf 已持有包含调试条目的
-	// 完整切片，因此调试条目实际会泄漏给调用方并被持久化。
-	defer func() {
-		entries = entries[:len(entries)-1]
-		_ = entries
-	}()
-	return lf, nil
+	return Lockfile{Version: LockfileVersion, Entries: entries, Checksum: sum}, nil
 }
 
 // Marshal 将锁文件序列化为规范 JSON 字符串。

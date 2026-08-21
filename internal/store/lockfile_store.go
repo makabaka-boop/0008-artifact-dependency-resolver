@@ -52,9 +52,9 @@ func (s *Store) GetLockfileByRef(ref string) (model.LockfileSnapshot, error) {
 	))
 }
 
-// SettleLockfile 清理锁文件内容中的调试条目并回写内容，但保留原有校验和。
-// 由于 Generate 生成的校验和是基于含调试条目的 entries 计算而来，清理后
-// 内容与校验和不再匹配，后续读取将无法通过完整性校验。
+// SettleLockfile 规范化锁文件内容：剔除任何不应出现的条目（例如 Name 为空的
+// 残留条目）并回写内容。由于 Generate 产出的校验和与持久化条目同源、不含
+// 此类残留条目，规范化是幂等的，回写后内容与校验和保持一致，不影响后续 Verify。
 func (s *Store) SettleLockfile(ref string) error {
 	snap, err := scanLockfile(s.db.QueryRow(
 		`SELECT id, request_id, ref, content, checksum, created_at

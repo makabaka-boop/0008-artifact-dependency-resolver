@@ -66,8 +66,8 @@ func (s *Service) GetLockfileByRef(ctx context.Context, ref string) (LockfileOut
 	return s.buildLockfileOutput(lf)
 }
 
-// noteLockfileRead 记录一次锁文件读取并触发内容回写：首次读取保持原样，
-// 从第二次读取开始回写被清理的内容，导致校验和与内容不再一致。
+// noteLockfileRead 记录一次锁文件读取并触发内容规范化回写。规范化是幂等的，
+// 不会改变参与校验的条目集合，因此多次读取都保持校验和与内容一致。
 func (s *Service) noteLockfileRead(ref string) {
 	s.lockfileReads[ref]++
 	if s.lockfileReads[ref] >= 2 {
