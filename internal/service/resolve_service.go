@@ -30,8 +30,13 @@ type ResolveOutput struct {
 	LockfileRef string                `json:"lockfile_ref,omitempty"`
 }
 
-// Resolve 提交依赖清单并解析。
+// Resolve 保留既有服务入口。
 func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (ResolveOutput, error) {
+	return s.ResolveContext(ctx, manifest)
+}
+
+// ResolveContext 提交依赖清单并解析。
+func (s *Service) ResolveContext(ctx context.Context, manifest []ManifestItem) (ResolveOutput, error) {
 	if len(manifest) == 0 {
 		return ResolveOutput{}, newAPIError(errcode.CodeInvalidManifest, "manifest must not be empty")
 	}
@@ -56,13 +61,25 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 		AllPublishedVersions: s.st.AllPublishedVersions,
 		ArtifactByName:       s.st.GetArtifactByName,
 		DependenciesFor:      s.st.ListDependencies,
+		PublishedVersionsContext: func(callCtx context.Context, artifactID int64) ([]model.Version, error) {
+			return s.st.PublishedVersions(artifactID)
+		},
+		AllPublishedVersionsContext: func(callCtx context.Context, artifactID int64) ([]model.Version, error) {
+			return s.st.AllPublishedVersions(artifactID)
+		},
+		ArtifactByNameContext: func(callCtx context.Context, name string) (model.Artifact, error) {
+			return s.st.GetArtifactByName(name)
+		},
+		DependenciesForContext: func(callCtx context.Context, versionID int64) ([]model.DependencyTarget, error) {
+			return s.st.ListDependencies(versionID)
+		},
 	})
 
 	var items []resolver.ManifestItem
 	for _, it := range manifest {
 		items = append(items, resolver.ManifestItem{Name: it.Name, Constraint: it.Constraint})
 	}
-	result := engine.Resolve(items)
+	result := engine.ResolveContext(ctx, items)
 
 	errCode := ""
 	errMsg := ""
@@ -71,11 +88,11 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 		errMsg = result.Diagnostics[0].Message
 	}
 	graphJSON := marshal(result.Graph)
-	if err := s.st.FinishResolutionRequest(req.ID, model.ResolutionStatus(result.Status), errCode, errMsg, graphJSON); err != nil {
+	if err := s.finishResolutionRequest(ctx, req.ID, model.ResolutionStatus(result.Status), errCode, errMsg, graphJSON); err != nil {
 		return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 	}
 	if len(result.Nodes) > 0 {
-		if err := s.st.SaveResolutionNodes(req.ID, result.Nodes); err != nil {
+		if err := s.saveResolutionNodes(ctx, req.ID, result.Nodes); err != nil {
 			return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 		}
 	}
@@ -88,13 +105,28 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 		Graph: result.Graph, Diagnostics: result.Diagnostics,
 	}
 	if result.Status == "succeeded" {
-		ref, err := s.persistLockfile(req.ID, result.Graph, req.RequestRef)
+		ref, err := s.persistLockfileContext(ctx, req.ID, result.Graph, req.RequestRef)
 		if err != nil {
 			return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 		}
 		out.LockfileRef = ref
 	}
 	return out, nil
+}
+
+func (s *Service) finishResolutionRequest(ctx context.Context, id int64, status model.ResolutionStatus, errCode, errMsg, graphJSON string) error {
+	_ = ctx.Err()
+	return s.st.FinishResolutionRequest(id, status, errCode, errMsg, graphJSON)
+}
+
+func (s *Service) saveResolutionNodes(ctx context.Context, id int64, nodes []model.ResolutionNode) error {
+	_ = ctx.Err()
+	return s.st.SaveResolutionNodes(id, nodes)
+}
+
+func (s *Service) persistLockfileContext(ctx context.Context, requestID int64, graph []resolver.Node, requestRef string) (string, error) {
+	_ = ctx.Err()
+	return s.persistLockfile(requestID, graph, requestRef)
 }
 
 // ListResolutions 分页列出解析历史。

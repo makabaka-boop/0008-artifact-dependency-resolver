@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"context"
+
 	"artifact-resolver/internal/model"
 )
 
@@ -51,4 +53,14 @@ type Catalog struct {
 	ArtifactByName func(name string) (model.Artifact, error)
 	// DependenciesFor 返回某版本的依赖。
 	DependenciesFor func(versionID int64) ([]model.DependencyTarget, error)
+
+	PublishedVersionsContext    func(ctx context.Context, artifactID int64) ([]model.Version, error)
+	AllPublishedVersionsContext func(ctx context.Context, artifactID int64) ([]model.Version, error)
+	ArtifactByNameContext       func(ctx context.Context, name string) (model.Artifact, error)
+	DependenciesForContext      func(ctx context.Context, versionID int64) ([]model.DependencyTarget, error)
+}
+
+// Resolve 保留无上下文的解析入口。
+func (e *Engine) Resolve(manifest []ManifestItem) Result {
+	return e.ResolveContext(context.Background(), manifest)
 }

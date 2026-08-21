@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -22,8 +23,8 @@ type selectedVersion struct {
 	artifactID int64
 }
 
-// Resolve 解析依赖清单，返回结果图或诊断。
-func (e *Engine) Resolve(manifest []ManifestItem) Result {
+// ResolveContext 解析依赖清单，返回结果图或诊断。
+func (e *Engine) ResolveContext(ctx context.Context, manifest []ManifestItem) Result {
 	selected := map[string]selectedVersion{}
 	explicit := map[string]string{}
 	var graph []Node
@@ -40,6 +41,9 @@ func (e *Engine) Resolve(manifest []ManifestItem) Result {
 
 	var resolveArtifact func(name, cstr string, depth int, parent string)
 	resolveArtifact = func(name, cstr string, depth int, parent string) {
+		if ctx.Err() != nil {
+			return
+		}
 		if inStack[name] {
 			// 检出循环。
 			cycle := append([]string{}, stack[1:]...)
@@ -55,7 +59,7 @@ func (e *Engine) Resolve(manifest []ManifestItem) Result {
 			return // 已选定，跳过。
 		}
 
-		art, err := e.cat.ArtifactByName(name)
+		art, err := e.artifactByName(ctx, name)
 		if err != nil {
 			diags = append(diags, Diagnostic{
 				Type:    "MISSING",
@@ -76,7 +80,7 @@ func (e *Engine) Resolve(manifest []ManifestItem) Result {
 		}
 
 		isExplicit := explicit[name] != ""
-		candidates, err := e.candidateVersions(art, isExplicit)
+		candidates, err := e.candidateVersionsContext(ctx, art, isExplicit)
 		if err != nil {
 			diags = append(diags, Diagnostic{Type: "MISSING", Message: err.Error(), Details: name})
 			return
@@ -106,7 +110,7 @@ func (e *Engine) Resolve(manifest []ManifestItem) Result {
 		// 递归展开传递依赖。
 		stack = append(stack, name)
 		inStack[name] = true
-		deps, _ := e.cat.DependenciesFor(chosen.ID)
+		deps, _ := e.dependenciesFor(ctx, chosen.ID)
 		for _, d := range deps {
 			resolveArtifact(d.ToArtifactName, d.Constraint, depth+1, name)
 		}
@@ -134,6 +138,30 @@ func (e *Engine) Resolve(manifest []ManifestItem) Result {
 		return Result{Status: "failed", Graph: graph, Diagnostics: diags, Nodes: nodes}
 	}
 	return Result{Status: "succeeded", Graph: graph, Diagnostics: diags, Nodes: nodes}
+}
+
+func (e *Engine) artifactByName(ctx context.Context, name string) (model.Artifact, error) {
+	if e.cat.ArtifactByNameContext != nil {
+		return e.cat.ArtifactByNameContext(ctx, name)
+	}
+	return e.cat.ArtifactByName(name)
+}
+
+func (e *Engine) candidateVersionsContext(ctx context.Context, art model.Artifact, explicit bool) ([]model.Version, error) {
+	if explicit && e.cat.AllPublishedVersionsContext != nil {
+		return e.cat.AllPublishedVersionsContext(ctx, art.ID)
+	}
+	if !explicit && e.cat.PublishedVersionsContext != nil {
+		return e.cat.PublishedVersionsContext(ctx, art.ID)
+	}
+	return e.candidateVersions(art, explicit)
+}
+
+func (e *Engine) dependenciesFor(ctx context.Context, versionID int64) ([]model.DependencyTarget, error) {
+	if e.cat.DependenciesForContext != nil {
+		return e.cat.DependenciesForContext(ctx, versionID)
+	}
+	return e.cat.DependenciesFor(versionID)
 }
 
 func (e *Engine) candidateVersions(art model.Artifact, explicit bool) ([]model.Version, error) {

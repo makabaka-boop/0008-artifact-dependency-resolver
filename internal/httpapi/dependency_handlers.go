@@ -46,7 +46,7 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errcode.CodeInvalidManifest, "invalid manifest")
 		return
 	}
-	out, err := s.svc.Resolve(r.Context(), req.Manifest)
+	out, err := s.svc.ResolveContext(r.Context(), req.Manifest)
 	if err != nil {
 		writeAPIErr(w, err)
 		return
