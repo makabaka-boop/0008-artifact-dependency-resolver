@@ -126,6 +126,16 @@ func (e *Engine) ResolveContext(ctx context.Context, manifest []ManifestItem) Re
 	// 冲突检测：同一制品在清单中重复出现不同约束。
 	diags = append(diags, e.detectConflicts(manifest)...)
 
+	// 请求上下文取消时，递归解析会静默提前结束，产生空/不完整的图。
+	// 将其视为显式失败，而非静默成功，避免落库不完整的解析记录与锁文件。
+	if err := ctx.Err(); err != nil {
+		diags = append(diags, Diagnostic{
+			Type:    "CANCEL",
+			Message: fmt.Sprintf("resolution canceled: %v", err),
+			Details: "context canceled before resolution completed",
+		})
+	}
+
 	sort.SliceStable(graph, func(i, j int) bool {
 		if graph[i].Depth != graph[j].Depth {
 			return graph[i].Depth < graph[j].Depth
