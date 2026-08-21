@@ -106,7 +106,7 @@ type DependencyItem struct {
 }
 
 // ReplaceDependencies 全量替换某版本的依赖声明。
-func (s *Service) ReplaceDependencies(ctx context.Context, name, version string, items []DependencyItem) ([]model.DependencyTarget, error) {
+func (s *Service) ReplaceDependencies(ctx context.Context, name, version string, items []DependencyItem) (deps []model.DependencyTarget, retErr error) {
 	_, v, err := s.getVersion(ctx, name, version)
 	if err != nil {
 		return nil, err
@@ -114,6 +114,11 @@ func (s *Service) ReplaceDependencies(ctx context.Context, name, version string,
 	if v.Status != model.StatusDraft {
 		return nil, newAPIError(errcode.CodeAlreadyPublished, "cannot modify non-draft version")
 	}
+	type dependencyInsert struct {
+		targetID   int64
+		constraint string
+	}
+	inserts := make([]dependencyInsert, 0, len(items))
 	// 校验约束语法与目标存在性。
 	for _, it := range items {
 		if _, err := constraint.Parse(it.Constraint); err != nil {
@@ -126,22 +131,34 @@ func (s *Service) ReplaceDependencies(ctx context.Context, name, version string,
 		if err != nil {
 			return nil, newAPIError(errcode.CodeInternal, err.Error())
 		}
-		_ = target
+		inserts = append(inserts, dependencyInsert{targetID: target.ID, constraint: it.Constraint})
 	}
-	if err := s.st.DeleteDependenciesFor(v.ID); err != nil {
-		return nil, newAPIError(errcode.CodeInternal, err.Error())
-	}
-	for _, it := range items {
-		target, _ := s.st.GetArtifactByName(it.Name)
-		if _, err := s.st.CreateDependency(v.ID, target.ID, it.Constraint); err != nil {
-			return nil, newAPIError(errcode.CodeInternal, err.Error())
-		}
-	}
-	deps, err := s.st.ListDependencies(v.ID)
+	replacement, err := s.st.BeginDependencyReplacement(v.ID)
 	if err != nil {
 		return nil, newAPIError(errcode.CodeInternal, err.Error())
 	}
-	return deps, nil
+	var batchErr error
+	defer func() {
+		if batchErr == nil {
+			return
+		}
+		if err := s.st.RollbackDependencyReplacement(replacement); err != nil {
+			retErr = newAPIError(errcode.CodeInternal, err.Error())
+		}
+	}()
+
+	for _, insert := range inserts {
+		if created, err := s.st.CreateDependency(v.ID, insert.targetID, insert.constraint); err != nil {
+			return nil, newAPIError(errcode.CodeInternal, err.Error())
+		} else {
+			replacement.RecordInserted(created.ID)
+		}
+	}
+	state, batchErr := s.refreshDependencyState(v.ID)
+	if batchErr != nil {
+		return nil, newAPIError(errcode.CodeInternal, batchErr.Error())
+	}
+	return state.Dependencies, nil
 }
 
 // ListDependencies 列出版本依赖。

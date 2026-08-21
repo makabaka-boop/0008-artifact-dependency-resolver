@@ -22,6 +22,31 @@ type selectedVersion struct {
 	artifactID int64
 }
 
+// DependencyState 是某个版本当前依赖及其解析结果的快照。
+type DependencyState struct {
+	Dependencies []model.DependencyTarget
+	Resolution   Result
+}
+
+// RefreshDependencies 从目录重新读取依赖并刷新解析结果。
+func (e *Engine) RefreshDependencies(versionID int64) (DependencyState, error) {
+	dependencies, err := e.cat.DependenciesFor(versionID)
+	if err != nil {
+		return DependencyState{}, err
+	}
+	manifest := make([]ManifestItem, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		manifest = append(manifest, ManifestItem{
+			Name:       dependency.ToArtifactName,
+			Constraint: dependency.Constraint,
+		})
+	}
+	return DependencyState{
+		Dependencies: dependencies,
+		Resolution:   e.Resolve(manifest),
+	}, nil
+}
+
 // Resolve 解析依赖清单，返回结果图或诊断。
 func (e *Engine) Resolve(manifest []ManifestItem) Result {
 	selected := map[string]selectedVersion{}

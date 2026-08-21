@@ -34,28 +34,17 @@ func (s *Service) CheckReadiness(ctx context.Context, name, version string) (Rea
 		return ReadinessOutput{}, newAPIError(errcode.CodeAlreadyPublished, "readiness check only applies to draft versions")
 	}
 
-	deps, err := s.st.ListDependencies(v.ID)
+	state, err := s.refreshDependencyState(v.ID)
 	if err != nil {
 		return ReadinessOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 	}
 
 	out := ReadinessOutput{Artifact: name, Version: version, Ready: true, Blockers: []ReadinessBlocker{}}
-	if len(deps) == 0 {
+	if len(state.Dependencies) == 0 {
 		return out, nil
 	}
 
-	manifest := make([]resolver.ManifestItem, 0, len(deps))
-	for _, d := range deps {
-		manifest = append(manifest, resolver.ManifestItem{Name: d.ToArtifactName, Constraint: d.Constraint})
-	}
-
-	engine := resolver.New(resolver.Catalog{
-		PublishedVersions:    s.st.PublishedVersions,
-		AllPublishedVersions: s.st.AllPublishedVersions,
-		ArtifactByName:       s.st.GetArtifactByName,
-		DependenciesFor:      s.st.ListDependencies,
-	})
-	result := engine.Resolve(manifest)
+	result := state.Resolution
 	if result.Status == "failed" {
 		out.Ready = false
 		for _, d := range result.Diagnostics {
@@ -66,4 +55,14 @@ func (s *Service) CheckReadiness(ctx context.Context, name, version string) (Rea
 		}
 	}
 	return out, nil
+}
+
+func (s *Service) refreshDependencyState(versionID int64) (resolver.DependencyState, error) {
+	engine := resolver.New(resolver.Catalog{
+		PublishedVersions:    s.st.PublishedVersions,
+		AllPublishedVersions: s.st.AllPublishedVersions,
+		ArtifactByName:       s.st.GetArtifactByName,
+		DependenciesFor:      s.st.ListDependencies,
+	})
+	return engine.RefreshDependencies(versionID)
 }
