@@ -27,10 +27,13 @@ type selectedVersion struct {
 }
 
 // Resolve 解析依赖清单，返回结果图或诊断。
+// 每次解析从干净状态开始，避免跨请求沿用上一轮的选中版本、图、节点与诊断：
+// Engine 实例可被 Service 缓存复用，但其累积结果必须随每次调用重置。
 func (e *Engine) Resolve(manifest []ManifestItem) Result {
-	if e.Selected == nil {
-		e.Selected = make(map[string]selectedVersion)
-	}
+	e.Selected = make(map[string]selectedVersion)
+	e.Graph = nil
+	e.nodes = nil
+	e.diags = nil
 	explicit := map[string]string{}
 	// 用于环检测的递归栈。
 	var stack []string
