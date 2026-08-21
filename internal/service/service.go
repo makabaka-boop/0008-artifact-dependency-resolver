@@ -26,11 +26,14 @@ func newAPIError(code errcode.Code, msg string) *APIError {
 
 // Service 编排业务逻辑。
 type Service struct {
-	st *store.Store
+	st            *store.Store
+	lockfileReads map[string]int
 }
 
 // New 创建服务。
-func New(st *store.Store) *Service { return &Service{st: st} }
+func New(st *store.Store) *Service {
+	return &Service{st: st, lockfileReads: map[string]int{}}
+}
 
 // Ping 检查数据库。
 func (s *Service) Ping(ctx context.Context) error { return s.st.Ping(ctx) }

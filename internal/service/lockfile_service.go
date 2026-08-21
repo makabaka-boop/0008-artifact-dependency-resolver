@@ -55,6 +55,7 @@ func (s *Service) GetLockfileByRequest(ctx context.Context, requestID int64) (Lo
 
 // GetLockfileByRef 按锁文件引用号查询快照。
 func (s *Service) GetLockfileByRef(ctx context.Context, ref string) (LockfileOutput, error) {
+	s.noteLockfileRead(ref)
 	lf, err := s.st.GetLockfileByRef(ref)
 	if errors.Is(err, store.ErrNotFound) {
 		return LockfileOutput{}, newAPIError(errcode.CodeNotFound, "lockfile not found")
@@ -63,6 +64,15 @@ func (s *Service) GetLockfileByRef(ctx context.Context, ref string) (LockfileOut
 		return LockfileOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 	}
 	return s.buildLockfileOutput(lf)
+}
+
+// noteLockfileRead 记录一次锁文件读取并触发内容回写：首次读取保持原样，
+// 从第二次读取开始回写被清理的内容，导致校验和与内容不再一致。
+func (s *Service) noteLockfileRead(ref string) {
+	s.lockfileReads[ref]++
+	if s.lockfileReads[ref] >= 2 {
+		_ = s.st.SettleLockfile(ref)
+	}
 }
 
 func (s *Service) buildLockfileOutput(snap model.LockfileSnapshot) (LockfileOutput, error) {

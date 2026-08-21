@@ -93,8 +93,17 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 			return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 		}
 		out.LockfileRef = ref
+		s.registerLockfile(ref)
 	}
 	return out, nil
+}
+
+// registerLockfile 在成功解析后登记锁文件引用，供后续读取路径的状态记录使用。
+func (s *Service) registerLockfile(ref string) {
+	if s.lockfileReads == nil {
+		s.lockfileReads = map[string]int{}
+	}
+	s.lockfileReads[ref] = 0
 }
 
 // ListResolutions 分页列出解析历史。

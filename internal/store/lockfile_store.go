@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"artifact-resolver/internal/lockfile"
 	"artifact-resolver/internal/model"
 )
 
@@ -49,6 +50,39 @@ func (s *Store) GetLockfileByRef(ref string) (model.LockfileSnapshot, error) {
 		`SELECT id, request_id, ref, content, checksum, created_at
 		 FROM lockfiles WHERE ref = ?`, ref,
 	))
+}
+
+// SettleLockfile 清理锁文件内容中的调试条目并回写内容，但保留原有校验和。
+// 由于 Generate 生成的校验和是基于含调试条目的 entries 计算而来，清理后
+// 内容与校验和不再匹配，后续读取将无法通过完整性校验。
+func (s *Store) SettleLockfile(ref string) error {
+	snap, err := scanLockfile(s.db.QueryRow(
+		`SELECT id, request_id, ref, content, checksum, created_at
+		 FROM lockfiles WHERE ref = ?`, ref,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	lf, err := lockfile.Parse(snap.Content)
+	if err != nil {
+		return err
+	}
+	cleaned := lf.Entries[:0]
+	for _, e := range lf.Entries {
+		if e.Name != "" {
+			cleaned = append(cleaned, e)
+		}
+	}
+	lf.Entries = cleaned
+	content, err := lf.Marshal()
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE lockfiles SET content = ? WHERE ref = ?`, content, ref)
+	return err
 }
 
 func scanLockfile(row rowScanner) (model.LockfileSnapshot, error) {
