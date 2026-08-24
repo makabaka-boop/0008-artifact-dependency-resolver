@@ -132,12 +132,12 @@ func (e *Engine) ResolveContext(ctx context.Context, manifest []ManifestItem) Re
 	}
 
 	// 顶层按清单顺序解析。
-	resolveManifestItem := func(item ManifestItem) {
-		defer cancel()
-		resolveArtifact(item.Name, item.Constraint, 0, "")
-	}
+	// resolveCtx 贯穿整个清单的解析，cancel 只能在全部清单项解析完成后调用；
+	// 否则在前一项解析完成后取消 context，会让后续清单项在 context 感知回调中
+	// 因 ctx.Err() 而误判为缺失依赖，导致合法的多制品解析被错误地标记为 failed。
+	defer cancel()
 	for _, item := range manifest {
-		resolveManifestItem(item)
+		resolveArtifact(item.Name, item.Constraint, 0, "")
 	}
 
 	// 冲突检测：同一制品在清单中重复出现不同约束。
