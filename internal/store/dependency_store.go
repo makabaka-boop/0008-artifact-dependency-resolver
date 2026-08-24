@@ -55,6 +55,8 @@ func (s *Store) ListDependencies(fromVersionID int64) ([]model.DependencyTarget,
 		out = putDependencyTarget(out, rowIndex, dt)
 		rowIndex++
 	}
+	// 截断到本次实际读取的行数，避免复用工作区时残留前一次较长的结果。
+	out = out[:rowIndex]
 	s.dependencyWorkspace = out
 	return out, rows.Err()
 }
