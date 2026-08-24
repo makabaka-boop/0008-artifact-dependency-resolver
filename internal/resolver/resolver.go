@@ -59,9 +59,9 @@ func (s *runState) beginRun() {
 	s.graph = s.graph[:0]
 	s.nodes = s.nodes[:0]
 	s.stack = s.stack[:0]
-	if s.lastSucceeded {
-		s.diagnostics = s.diagnostics[:0]
-	}
+	// 每次解析都应独立完成：无条件清空上一次的诊断，避免前一次失败
+	// 运行残留的诊断污染本次响应与持久化记录。
+	s.diagnostics = s.diagnostics[:0]
 }
 
 // Catalog 提供给解析器的版本与依赖数据视图。
