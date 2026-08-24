@@ -8,6 +8,82 @@ import (
 	"artifact-resolver/internal/store"
 )
 
+func TestExactVersionResolutionTerminalStateRemainsSucceededAcrossRerun(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "exact-version-rerun.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	s := New(st)
+	ctx := context.Background()
+	if _, err := s.CreateArtifact(ctx, "exact-app", ""); err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	if _, err := s.CreateVersion(ctx, "exact-app", "1.2.3"); err != nil {
+		t.Fatalf("create version: %v", err)
+	}
+	if _, err := s.PublishVersion(ctx, "exact-app", "1.2.3"); err != nil {
+		t.Fatalf("publish version: %v", err)
+	}
+
+	manifest := []ManifestItem{{Name: "exact-app", Constraint: "1.2.3"}}
+	first, err := s.Resolve(ctx, manifest)
+	if err != nil {
+		t.Fatalf("resolve exact version: %v", err)
+	}
+	assertSuccessfulResolveOutput(t, "initial resolve", first)
+	assertPersistedSuccessfulResolution(t, ctx, s, "initial resolution record", first.RequestID)
+
+	rerun, err := s.RerunResolution(ctx, first.RequestID)
+	if err != nil {
+		t.Fatalf("rerun resolution %d: %v", first.RequestID, err)
+	}
+	assertSuccessfulResolveOutput(t, "rerun", rerun)
+	assertPersistedSuccessfulResolution(t, ctx, s, "original record after rerun", first.RequestID)
+	assertPersistedSuccessfulResolution(t, ctx, s, "rerun record", rerun.RequestID)
+}
+
+func assertSuccessfulResolveOutput(t *testing.T, stage string, out ResolveOutput) {
+	t.Helper()
+	if out.Status != "succeeded" {
+		t.Errorf("%s status = %q, want succeeded; diagnostics = %#v", stage, out.Status, out.Diagnostics)
+	}
+	if out.RequestID <= 0 {
+		t.Errorf("%s request ID = %d, want a positive ID", stage, out.RequestID)
+	}
+	if out.LockfileRef == "" {
+		t.Errorf("%s lockfile reference is empty", stage)
+	}
+	if len(out.Graph) == 0 {
+		t.Errorf("%s graph is empty", stage)
+	}
+}
+
+func assertPersistedSuccessfulResolution(t *testing.T, ctx context.Context, s *Service, stage string, id int64) {
+	t.Helper()
+	req, nodes, err := s.GetResolution(ctx, id)
+	if err != nil {
+		t.Errorf("%s: get resolution %d: %v", stage, id, err)
+		return
+	}
+	if req.Status != "succeeded" {
+		t.Errorf("%s status = %q, want succeeded", stage, req.Status)
+	}
+	if req.ErrorCode != "" {
+		t.Errorf("%s error code = %q, want empty", stage, req.ErrorCode)
+	}
+	if req.ErrorMessage != "" {
+		t.Errorf("%s error message = %q, want empty", stage, req.ErrorMessage)
+	}
+	if req.GraphJSON == "" {
+		t.Errorf("%s stored graph is empty", stage)
+	}
+	if len(nodes) == 0 {
+		t.Errorf("%s resolution nodes are empty", stage)
+	}
+}
+
 // TestEndToEnd 覆盖创建→发布→声明依赖→resolve→历史→compare 全流程。
 func TestEndToEnd(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "e2e.db"))

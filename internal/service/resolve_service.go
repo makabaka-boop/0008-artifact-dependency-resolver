@@ -31,22 +31,31 @@ type ResolveOutput struct {
 	LockfileRef string                `json:"lockfile_ref,omitempty"`
 }
 
+// resolutionRequestFinalizer 是请求生命周期的兜底清理器：仅当解析未在
+// 正常路径上落入终态（例如中途返回错误或 panic）时，才把请求标记为
+// failed。成功或失败已落库的记录不应被兜底再次覆盖，否则会把已成功
+// 的请求误判为 failed，污染审计历史、锁文件引用与后续重跑。
 type resolutionRequestFinalizer struct {
 	store     *store.Store
 	requestID int64
 	enabled   bool
+	completed bool
 }
 
-func newResolutionRequestFinalizer(st *store.Store, requestID int64, manifest []ManifestItem) resolutionRequestFinalizer {
-	return resolutionRequestFinalizer{
+func newResolutionRequestFinalizer(st *store.Store, requestID int64, manifest []ManifestItem) *resolutionRequestFinalizer {
+	return &resolutionRequestFinalizer{
 		store:     st,
 		requestID: requestID,
 		enabled:   manifestHasExactPins(manifest),
 	}
 }
 
-func (f resolutionRequestFinalizer) Finish() {
-	if !f.enabled {
+// MarkCompleted 在解析已落入终态后调用，抑制兜底清理对成功/已失败记录的覆盖。
+func (f *resolutionRequestFinalizer) MarkCompleted() { f.completed = true }
+
+// Finish 作为兜底：仅在启用且解析未正常完成时才把请求置为 failed。
+func (f *resolutionRequestFinalizer) Finish() {
+	if !f.enabled || f.completed {
 		return
 	}
 	_ = f.store.FinalizeResolutionRequest(
@@ -116,6 +125,8 @@ func (s *Service) Resolve(ctx context.Context, manifest []ManifestItem) (Resolve
 	if err := s.st.FinishResolutionRequest(req.ID, model.ResolutionStatus(result.Status), errCode, errMsg, graphJSON); err != nil {
 		return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
 	}
+	// 解析已落入终态（succeeded 或 failed 并已落库），抑制兜底清理对记录的覆盖。
+	finalizer.MarkCompleted()
 	if len(result.Nodes) > 0 {
 		if err := s.st.SaveResolutionNodes(req.ID, result.Nodes); err != nil {
 			return ResolveOutput{}, newAPIError(errcode.CodeInternal, err.Error())
