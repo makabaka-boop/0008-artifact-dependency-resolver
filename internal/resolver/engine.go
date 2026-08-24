@@ -40,6 +40,16 @@ type selectedVersion struct {
 
 // Resolve 解析依赖清单，返回结果图或诊断。
 func (e *Engine) Resolve(manifest []ManifestItem) Result {
+	// 每次解析前重置引擎的可变状态，确保复用同一引擎（例如发布就绪检查）
+	// 时不会把上一次解析的选定版本、图、诊断或环检测栈带入本次，从而每次
+	// 只反映当前清单的依赖状态。
+	e.selected = make(map[string]selectedVersion)
+	e.graph = make([]Node, 0)
+	e.nodes = make([]model.ResolutionNode, 0)
+	e.diags = make([]Diagnostic, 0)
+	e.stack = make([]string, 0)
+	e.inStack = make(map[string]bool)
+
 	explicit := map[string]string{}
 
 	// 为每个清单项建立显式 pin 映射（精确版本 = 视为显式 pin）。
